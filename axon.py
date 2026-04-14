@@ -244,27 +244,31 @@ def main() -> None:
 
     speaker.register_stop_hotkey()
 
-    async def _startup():
-        push_to_talk.start(loop)
-
-        # Pre-warm local models so first response isn't slow
-        signals.status_changed.emit("Loading models...")
+    async def _warm_models():
+        """Background task — loads models into VRAM without blocking the UI."""
         try:
             import httpx
             base = config.ollama.base_url.replace("/v1", "")
-            async with httpx.AsyncClient(timeout=120) as client:
-                for model in [config.ollama.router_model, config.ollama.model]:
-                    logger.info(f"Pre-warming {model}...")
+            for model in [config.ollama.router_model, config.ollama.model]:
+                signals.status_changed.emit(f"Loading {model.split(':')[0]}…")
+                logger.info(f"Pre-warming {model}...")
+                async with httpx.AsyncClient(timeout=300) as client:
                     await client.post(
                         f"{base}/api/generate",
                         json={"model": model, "prompt": " ", "keep_alive": "60m"},
                     )
-                    logger.info(f"{model} warm")
+                logger.info(f"{model} warm")
+            signals.status_changed.emit("Ready")
         except Exception as e:
             logger.warning(f"Model pre-warm failed (will load on first use): {e}")
+            signals.status_changed.emit("Ready")
 
+    async def _startup():
+        push_to_talk.start(loop)
         logger.info("AXON ready")
         signals.status_changed.emit("Ready")
+        # Warm models in the background — UI is fully usable while this runs
+        asyncio.ensure_future(_warm_models())
 
     with loop:
         loop.create_task(_startup())
