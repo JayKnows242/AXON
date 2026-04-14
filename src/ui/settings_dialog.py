@@ -190,8 +190,8 @@ class _VoicePage(QWidget):
     def __init__(self, settings: dict):
         super().__init__()
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 16, 20, 16)
-        layout.setSpacing(10)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(12)
 
         layout.addWidget(_section("TEXT TO SPEECH"))
         layout.addWidget(_divider())
@@ -243,8 +243,8 @@ class _InputPage(QWidget):
     def __init__(self, settings: dict):
         super().__init__()
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 16, 20, 16)
-        layout.setSpacing(10)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(12)
 
         layout.addWidget(_section("SPEECH INPUT"))
         layout.addWidget(_divider())
@@ -282,8 +282,8 @@ class _AgentPage(QWidget):
     def __init__(self, settings: dict):
         super().__init__()
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 16, 20, 16)
-        layout.setSpacing(10)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(12)
 
         # ── Local model ──────────────────────────────────────────────────────
         layout.addWidget(_section("LOCAL MODEL  (Ollama)"))
@@ -388,8 +388,8 @@ class _ScreenPage(QWidget):
     def __init__(self, settings: dict):
         super().__init__()
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 16, 20, 16)
-        layout.setSpacing(10)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(12)
 
         layout.addWidget(_section("SCREEN CAPTURE"))
         layout.addWidget(_divider())
@@ -428,7 +428,7 @@ class SettingsDialog(QDialog):
         self._drag = None
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setMinimumSize(560, 420)
+        self.setMinimumSize(620, 500)
         self.setStyleSheet(_DIALOG_STYLE)
         self._build()
 
@@ -466,21 +466,31 @@ class SettingsDialog(QDialog):
 
         # Nav
         self._nav = QListWidget()
-        self._nav.setFixedWidth(140)
+        self._nav.setFixedWidth(150)
         for item in ["Voice", "Input", "Agent", "Screen"]:
             self._nav.addItem(QListWidgetItem(item))
         self._nav.setCurrentRow(0)
         self._nav.currentRowChanged.connect(self._switch_page)
         body.addWidget(self._nav)
 
-        # Pages
+        # Pages (wrapped in scroll area so tall content doesn't get clipped)
         self._pages = QStackedWidget()
         self._p_voice  = _VoicePage(self._settings)
         self._p_input  = _InputPage(self._settings)
         self._p_agent  = _AgentPage(self._settings)
         self._p_screen = _ScreenPage(self._settings)
         for p in [self._p_voice, self._p_input, self._p_agent, self._p_screen]:
-            self._pages.addWidget(p)
+            scroll = QScrollArea()
+            scroll.setWidget(p)
+            scroll.setWidgetResizable(True)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            scroll.setStyleSheet(
+                "QScrollArea { background: transparent; border: none; }"
+                "QScrollBar:vertical { background: transparent; width: 4px; }"
+                "QScrollBar::handle:vertical { background: rgba(0,255,65,40); border-radius: 2px; }"
+                "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
+            )
+            self._pages.addWidget(scroll)
         body.addWidget(self._pages)
 
         body_widget = QWidget()
