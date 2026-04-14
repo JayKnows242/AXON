@@ -44,7 +44,10 @@ async def find_window(title: str) -> str:
 async def focus_window(title: str) -> str:
     """Bring a window to the foreground."""
     def _do():
-        import win32gui, win32api, win32process, win32con
+        import ctypes
+        import win32gui, win32process, win32con
+        user32 = ctypes.windll.user32
+
         title_lower = title.lower()
         hwnd = None
 
@@ -60,18 +63,23 @@ async def focus_window(title: str) -> str:
         # Restore if minimized
         win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
 
-        # Use AttachThreadInput trick to reliably steal foreground
+        # Use AttachThreadInput via ctypes to reliably steal foreground
         try:
-            fg = win32gui.GetForegroundWindow()
+            fg = user32.GetForegroundWindow()
             tid_fg = win32process.GetWindowThreadProcessId(fg)[0]
             tid_tgt = win32process.GetWindowThreadProcessId(hwnd)[0]
-            win32api.AttachThreadInput(tid_fg, tid_tgt, True)
-            win32gui.SetForegroundWindow(hwnd)
-            win32gui.BringWindowToTop(hwnd)
-            win32api.AttachThreadInput(tid_fg, tid_tgt, False)
+            if tid_fg != tid_tgt:
+                user32.AttachThreadInput(tid_fg, tid_tgt, True)
+            user32.SetForegroundWindow(hwnd)
+            user32.BringWindowToTop(hwnd)
+            if tid_fg != tid_tgt:
+                user32.AttachThreadInput(tid_fg, tid_tgt, False)
         except Exception as e:
             logger.warning(f"SetForegroundWindow fallback: {e}")
-            win32gui.SetForegroundWindow(hwnd)
+            try:
+                user32.SetForegroundWindow(hwnd)
+            except Exception:
+                pass
 
         return f"Focused: {win32gui.GetWindowText(hwnd)}"
 
