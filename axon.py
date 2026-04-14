@@ -244,23 +244,44 @@ def main() -> None:
 
     speaker.register_stop_hotkey()
 
+    async def _warm_one(model: str, base: str) -> None:
+        import httpx
+        import time
+        short = model.split(":")[0]
+        signals.status_changed.emit(f"Loading {short}…")
+        logger.info(f"═══ Loading {model} into VRAM (this can take 1–3 min on first run) ═══")
+        t0 = time.monotonic()
+
+        async def _ticker():
+            while True:
+                await asyncio.sleep(5)
+                elapsed = time.monotonic() - t0
+                logger.info(f"  ⏳ {model} still loading… {elapsed:.0f}s elapsed")
+
+        ticker = asyncio.ensure_future(_ticker())
+        try:
+            async with httpx.AsyncClient(timeout=300) as client:
+                await client.post(
+                    f"{base}/api/generate",
+                    json={"model": model, "prompt": " ", "keep_alive": "60m"},
+                )
+            elapsed = time.monotonic() - t0
+            logger.info(f"  ✓ {model} ready in {elapsed:.1f}s")
+        except Exception as e:
+            logger.warning(f"  ✗ {model} failed to pre-warm: {e}")
+        finally:
+            ticker.cancel()
+
     async def _warm_models():
         """Background task — loads models into VRAM without blocking the UI."""
         try:
-            import httpx
             base = config.ollama.base_url.replace("/v1", "")
             for model in [config.ollama.router_model, config.ollama.model]:
-                signals.status_changed.emit(f"Loading {model.split(':')[0]}…")
-                logger.info(f"Pre-warming {model}...")
-                async with httpx.AsyncClient(timeout=300) as client:
-                    await client.post(
-                        f"{base}/api/generate",
-                        json={"model": model, "prompt": " ", "keep_alive": "60m"},
-                    )
-                logger.info(f"{model} warm")
+                await _warm_one(model, base)
             signals.status_changed.emit("Ready")
+            logger.info("═══ All models ready ═══")
         except Exception as e:
-            logger.warning(f"Model pre-warm failed (will load on first use): {e}")
+            logger.warning(f"Model pre-warm failed: {e}")
             signals.status_changed.emit("Ready")
 
     async def _startup():
