@@ -285,6 +285,7 @@ class ToolDispatcher:
             self._status_cb(name, inputs)
 
     async def dispatch(self, name: str, inputs: dict) -> ToolResult:
+        inputs = self._coerce_inputs(name, dict(inputs))
         self._emit(name, inputs)
         handler = getattr(self, f"_t_{name}", None)
         if handler is None:
@@ -294,6 +295,29 @@ class ToolDispatcher:
         except Exception as e:
             logger.error(f"Tool {name} error: {e}")
             return ToolResult(success=False, output="", error=str(e))
+
+    @staticmethod
+    def _coerce_inputs(name: str, inputs: dict) -> dict:
+        """Fix common model mistakes — e.g. passing '640, 480' as a single x string."""
+        coord_tools = {"click", "double_click", "move_mouse", "scroll"}
+        if name in coord_tools:
+            # Handle '640, 480' passed as x
+            x = inputs.get("x")
+            if isinstance(x, str) and "," in x:
+                parts = [p.strip() for p in x.split(",")]
+                try:
+                    inputs["x"] = int(float(parts[0]))
+                    inputs["y"] = int(float(parts[1]))
+                except (ValueError, IndexError):
+                    pass
+            # Coerce to int
+            for k in ("x", "y"):
+                if k in inputs:
+                    try:
+                        inputs[k] = int(float(inputs[k]))
+                    except (ValueError, TypeError):
+                        pass
+        return inputs
 
     # ── Screenshot ──────────────────────────────────────────────────────────
 

@@ -110,7 +110,9 @@ class AxonAgent:
 
         use_smart = settings.get("use_smart_for_complex", True) and _needs_smart_model(user_text)
         model = config.claude.smart_model if use_smart else config.claude.fast_model
-        logger.info(f"→ {'Smart' if use_smart else 'Fast'} model ({model})")
+        label = "Sonnet" if "sonnet" in model else "Opus" if "opus" in model else "Haiku"
+        logger.info(f"→ {label} ({model})")
+        yield ("model", label)
 
         self._history.append({"role": "user", "content": user_text})
         self._trim_history()
@@ -244,3 +246,33 @@ class AxonAgent:
         max_msgs = 40
         if len(self._history) > max_msgs:
             self._history = self._history[-max_msgs:]
+        self._sanitize_history()
+
+    def _sanitize_history(self) -> None:
+        """Remove any trailing incomplete tool exchanges caused by cancellation.
+
+        If the last assistant message contains tool_use blocks but has no
+        following tool_result user message, the API will reject the request.
+        Strip the orphaned turn so the next request starts clean.
+        """
+        while self._history:
+            last = self._history[-1]
+            # An assistant message with tool_use and no following result
+            if last["role"] == "assistant":
+                content = last.get("content", "")
+                has_tool_use = isinstance(content, list) and any(
+                    b.get("type") == "tool_use" for b in content
+                )
+                if has_tool_use:
+                    self._history.pop()
+                    continue
+            # A user message that is purely tool_results with no preceding assistant tool_use
+            if last["role"] == "user":
+                content = last.get("content", "")
+                is_results_only = isinstance(content, list) and all(
+                    b.get("type") == "tool_result" for b in content
+                )
+                if is_results_only:
+                    self._history.pop()
+                    continue
+            break
