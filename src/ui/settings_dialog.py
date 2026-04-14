@@ -26,12 +26,10 @@ DEFAULTS: dict = {
     # Input
     "whisper_model": "base.en",
     "push_to_talk_key": "ctrl+shift+space",
-    # Agent — local
-    "local_model": "qwen2.5-coder:14b",
-    "router_model": "qwen2.5:1.5b",
-    # Agent — cloud
-    "use_cloud_for_complex": True,
-    "claude_model": "claude-sonnet-4-6",
+    # Agent
+    "fast_model": "claude-haiku-4-5-20251001",
+    "smart_model": "claude-sonnet-4-6",
+    "use_smart_for_complex": True,
     "auto_screenshot": True,
     "max_tool_iterations": 25,
     # Screen
@@ -285,72 +283,46 @@ class _AgentPage(QWidget):
         layout.setContentsMargins(24, 20, 24, 20)
         layout.setSpacing(12)
 
-        # ── Local model ──────────────────────────────────────────────────────
-        layout.addWidget(_section("LOCAL MODEL  (Ollama)"))
+        # ── Models ───────────────────────────────────────────────────────────
+        layout.addWidget(_section("CLAUDE MODELS"))
         layout.addWidget(_divider())
 
-        layout.addWidget(_label("Model  (must be pulled in Ollama)"))
-        self.local_model = QComboBox()
-        self.local_model.setEditable(True)
-        local_models = [
-            "qwen2.5-coder:14b",
-            "qwen2.5-coder:7b",
-            "qwen2.5:14b",
-            "qwen2.5:7b",
-            "llama3.1:8b",
-            "phi4",
+        layout.addWidget(_label("Fast model  (PC tasks, clicking, simple questions)"))
+        self.fast_model = QComboBox()
+        fast_models = [
+            ("Haiku 4.5 — Fastest, cheapest", "claude-haiku-4-5-20251001"),
+            ("Sonnet 4.6 — Balanced", "claude-sonnet-4-6"),
         ]
-        for m in local_models:
-            self.local_model.addItem(m)
-        cur_local = settings.get("local_model", "qwen2.5-coder:14b")
-        idx = next((i for i, m in enumerate(local_models) if m == cur_local), -1)
-        if idx >= 0:
-            self.local_model.setCurrentIndex(idx)
-        else:
-            self.local_model.setCurrentText(cur_local)
-        layout.addWidget(self.local_model)
+        for label, val in fast_models:
+            self.fast_model.addItem(label, val)
+        cur_fast = settings.get("fast_model", "claude-haiku-4-5-20251001")
+        idx = next((i for i, (_, v) in enumerate(fast_models) if v == cur_fast), 0)
+        self.fast_model.setCurrentIndex(idx)
+        layout.addWidget(self.fast_model)
 
-        layout.addWidget(_label("Router model  (classifies task complexity)"))
-        self.router_model = QComboBox()
-        self.router_model.setEditable(True)
-        router_models = ["qwen2.5:1.5b", "qwen2.5:0.5b", "qwen2.5-coder:7b"]
-        for m in router_models:
-            self.router_model.addItem(m)
-        cur_router = settings.get("router_model", "qwen2.5:1.5b")
-        idx = next((i for i, m in enumerate(router_models) if m == cur_router), -1)
-        if idx >= 0:
-            self.router_model.setCurrentIndex(idx)
-        else:
-            self.router_model.setCurrentText(cur_router)
-        layout.addWidget(self.router_model)
-
-        # ── Cloud model ──────────────────────────────────────────────────────
-        layout.addSpacing(6)
-        layout.addWidget(_section("CLOUD MODEL  (Claude API)"))
-        layout.addWidget(_divider())
-
-        self.use_cloud = QCheckBox("Use Claude for complex tasks")
-        self.use_cloud.setChecked(settings.get("use_cloud_for_complex", True))
-        self.use_cloud.setToolTip(
-            "Qwen routes simple tasks locally.\n"
-            "Complex tasks escalate to Claude.\n"
-            "Falls back to local if offline or API key missing."
-        )
-        layout.addWidget(self.use_cloud)
-
-        layout.addWidget(_label("Claude model"))
-        self.cloud_model = QComboBox()
-        cloud_models = [
+        layout.addSpacing(4)
+        layout.addWidget(_label("Smart model  (complex code, analysis, reasoning)"))
+        self.smart_model = QComboBox()
+        smart_models = [
             ("Sonnet 4.6 — Recommended", "claude-sonnet-4-6"),
-            ("Haiku 4.5 — Faster, cheaper", "claude-haiku-4-5-20251001"),
             ("Opus 4.6 — Most powerful", "claude-opus-4-6"),
+            ("Haiku 4.5 — Always fast", "claude-haiku-4-5-20251001"),
         ]
-        for label, val in cloud_models:
-            self.cloud_model.addItem(label, val)
-        cur_cloud = settings.get("claude_model", "claude-sonnet-4-6")
-        idx = next((i for i, (_, v) in enumerate(cloud_models) if v == cur_cloud), 0)
-        self.cloud_model.setCurrentIndex(idx)
-        layout.addWidget(self.cloud_model)
+        for label, val in smart_models:
+            self.smart_model.addItem(label, val)
+        cur_smart = settings.get("smart_model", "claude-sonnet-4-6")
+        idx = next((i for i, (_, v) in enumerate(smart_models) if v == cur_smart), 0)
+        self.smart_model.setCurrentIndex(idx)
+        layout.addWidget(self.smart_model)
+
+        layout.addSpacing(4)
+        self.use_smart = QCheckBox("Auto-escalate complex tasks to smart model")
+        self.use_smart.setChecked(settings.get("use_smart_for_complex", True))
+        self.use_smart.setToolTip(
+            "AXON detects keywords like 'design', 'analyze', 'debug'\n"
+            "and automatically uses the smart model for those tasks."
+        )
+        layout.addWidget(self.use_smart)
 
         # ── Behaviour ────────────────────────────────────────────────────────
         layout.addSpacing(6)
@@ -375,10 +347,9 @@ class _AgentPage(QWidget):
 
     def values(self) -> dict:
         return {
-            "local_model": self.local_model.currentText().strip(),
-            "router_model": self.router_model.currentText().strip(),
-            "use_cloud_for_complex": self.use_cloud.isChecked(),
-            "claude_model": self.cloud_model.currentData(),
+            "fast_model": self.fast_model.currentData(),
+            "smart_model": self.smart_model.currentData(),
+            "use_smart_for_complex": self.use_smart.isChecked(),
             "auto_screenshot": self.auto_ss.isChecked(),
             "max_tool_iterations": self.max_iter.currentData(),
         }

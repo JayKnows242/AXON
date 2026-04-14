@@ -5,7 +5,6 @@ Entry point — MUST maintain strict import order to avoid CTranslate2 segfault.
 from __future__ import annotations
 
 import asyncio
-import ctypes
 import os
 import pathlib
 import shutil
@@ -67,35 +66,7 @@ def _ensure_env() -> None:
         shutil.copy(env_example, env_file)
 
 
-def _check_ollama() -> bool:
-    """Return True if Ollama is reachable at localhost:11434."""
-    import socket
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(2)
-        s.connect(("127.0.0.1", 11434))
-        s.close()
-        return True
-    except OSError:
-        return False
-
-
 _ensure_env()
-
-if not _check_ollama():
-    ctypes.windll.user32.MessageBoxW(
-        0,
-        "Ollama is not running.\n\n"
-        "1. Download Ollama from: ollama.com\n"
-        "2. Install and launch it\n"
-        "3. Open a terminal and run:\n"
-        "   ollama pull qwen2.5-coder:14b\n"
-        "   ollama pull qwen2.5:1.5b\n\n"
-        "Then restart AXON.",
-        "AXON — Ollama Required",
-        0x30,  # Warning icon
-    )
-    sys.exit(0)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # STEP 5 — Pre-warm Whisper BEFORE Qt or sounddevice load
@@ -244,52 +215,10 @@ def main() -> None:
 
     speaker.register_stop_hotkey()
 
-    async def _warm_one(model: str, base: str) -> None:
-        import httpx
-        import time
-        short = model.split(":")[0]
-        signals.status_changed.emit(f"Loading {short}…")
-        logger.info(f"═══ Loading {model} into VRAM (this can take 1–3 min on first run) ═══")
-        t0 = time.monotonic()
-
-        async def _ticker():
-            while True:
-                await asyncio.sleep(5)
-                elapsed = time.monotonic() - t0
-                logger.info(f"  ⏳ {model} still loading… {elapsed:.0f}s elapsed")
-
-        ticker = asyncio.ensure_future(_ticker())
-        try:
-            async with httpx.AsyncClient(timeout=300) as client:
-                await client.post(
-                    f"{base}/api/generate",
-                    json={"model": model, "prompt": " ", "keep_alive": "60m"},
-                )
-            elapsed = time.monotonic() - t0
-            logger.info(f"  ✓ {model} ready in {elapsed:.1f}s")
-        except Exception as e:
-            logger.warning(f"  ✗ {model} failed to pre-warm: {e}")
-        finally:
-            ticker.cancel()
-
-    async def _warm_models():
-        """Background task — loads models into VRAM without blocking the UI."""
-        try:
-            base = config.ollama.base_url.replace("/v1", "")
-            for model in [config.ollama.router_model, config.ollama.model]:
-                await _warm_one(model, base)
-            signals.status_changed.emit("Ready")
-            logger.info("═══ All models ready ═══")
-        except Exception as e:
-            logger.warning(f"Model pre-warm failed: {e}")
-            signals.status_changed.emit("Ready")
-
     async def _startup():
         push_to_talk.start(loop)
         logger.info("AXON ready")
         signals.status_changed.emit("Ready")
-        # Warm models in the background — UI is fully usable while this runs
-        asyncio.ensure_future(_warm_models())
 
     with loop:
         loop.create_task(_startup())

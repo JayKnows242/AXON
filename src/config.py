@@ -25,12 +25,6 @@ def _env_bool(key: str, default: bool = False) -> bool:
     return os.getenv(key, str(default)).lower() in ("true", "1", "yes")
 
 
-class OllamaConfig(BaseModel):
-    base_url: str = _env("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-    model: str = _env("OLLAMA_MODEL", "qwen2.5-coder:14b")
-    router_model: str = _env("OLLAMA_ROUTER_MODEL", "qwen2.5:1.5b")
-
-
 class AudioConfig(BaseModel):
     push_to_talk_key: str = _env("PUSH_TO_TALK_KEY", "ctrl+shift+space")
     whisper_model: str = _env("WHISPER_MODEL", "base.en")
@@ -42,7 +36,8 @@ class AudioConfig(BaseModel):
 
 class ClaudeConfig(BaseModel):
     api_key: str = _env("ANTHROPIC_API_KEY", "")
-    model: str = _env("CLAUDE_MODEL", "claude-sonnet-4-6")
+    fast_model: str = _env("CLAUDE_FAST_MODEL", "claude-haiku-4-5-20251001")
+    smart_model: str = _env("CLAUDE_SMART_MODEL", "claude-sonnet-4-6")
     max_tokens: int = 4096
     temperature: float = 0.3
     max_tool_iterations: int = 25
@@ -70,7 +65,6 @@ class UIConfig(BaseModel):
 
 
 class AxonConfig(BaseModel):
-    ollama: OllamaConfig = OllamaConfig()
     audio: AudioConfig = AudioConfig()
     claude: ClaudeConfig = ClaudeConfig()
     capture: CaptureConfig = CaptureConfig()

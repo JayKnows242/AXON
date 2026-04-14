@@ -1,27 +1,17 @@
-"""AXON Agent — smart routing between local Ollama and cloud Claude."""
+"""AXON Agent — routes between fast (Haiku) and smart (Sonnet) Claude models."""
 from __future__ import annotations
 
 import asyncio
 import json
-import socket
 from typing import AsyncGenerator
-
-import re
 
 from loguru import logger
 
 from src.config import config
-from src.core.tools import ToolDispatcher, TOOL_SCHEMAS, get_openai_tools
-
-# Matches tool calls the model writes as plain text instead of structured calls
-# e.g.  {"name": "click", "arguments": {"x": 100, "y": 200}}
-_TEXT_TOOL_RE = re.compile(
-    r'\{\s*"name"\s*:\s*"(\w+)"\s*,\s*"arguments"\s*:\s*(\{[^{}]*\})\s*\}',
-    re.DOTALL,
-)
+from src.core.tools import ToolDispatcher, TOOL_SCHEMAS
 
 # ─────────────────────────────────────────────────────────────────────────────
-# System prompt (shared by both backends)
+# System prompt
 # ─────────────────────────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = """\
@@ -84,126 +74,28 @@ Assistant: Checking now.
 Open windows: Notepad, Task Manager, ...
 """
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Utilities
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _has_internet() -> bool:
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(2)
-        s.connect(("8.8.8.8", 53))
-        s.close()
-        return True
-    except OSError:
-        return False
+# Keywords that warrant routing to the smarter model
+_SMART_KEYWORDS = {
+    "architecture", "design", "refactor", "explain", "analyze", "analyse",
+    "debug", "why is", "how does", "write a", "build a", "create a",
+    "implement", "algorithm", "optimize", "review", "compare", "difference",
+    "complex", "advanced", "research", "summarize", "summarise",
+}
 
 
-def _ollama_client():
-    from openai import AsyncOpenAI
-    return AsyncOpenAI(base_url=config.ollama.base_url, api_key="ollama")
+def _needs_smart_model(text: str) -> bool:
+    lower = text.lower()
+    return any(kw in lower for kw in _SMART_KEYWORDS)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Router — asks the small local model to classify task complexity
-# ─────────────────────────────────────────────────────────────────────────────
-
-async def _classify_task(text: str) -> str:
-    """Returns 'local' or 'cloud'. Uses router_model (tiny, fast)."""
-    try:
-        client = _ollama_client()
-        resp = await client.chat.completions.create(
-            model=config.ollama.router_model,
-            messages=[{
-                "role": "user",
-                "content": (
-                    "You are a task router. Classify the task below.\n"
-                    "Reply with ONE word only: LOCAL or CLOUD\n\n"
-                    "LOCAL = PC control, clicking, typing, file ops, web search, "
-                    "simple scripts, basic questions\n"
-                    "CLOUD = complex software architecture, hard debugging, advanced "
-                    "reasoning, lengthy analysis, anything you are not confident about\n\n"
-                    f"Task: {text}"
-                ),
-            }],
-            max_tokens=3,
-            temperature=0,
-        )
-        answer = resp.choices[0].message.content.strip().upper()
-        decision = "cloud" if "CLOUD" in answer else "local"
-        logger.debug(f"Router → {decision}  ({text[:60]})")
-        return decision
-    except Exception as e:
-        logger.warning(f"Router failed ({e}), defaulting to local")
-        return "local"
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# History conversion — OpenAI format → Anthropic format
-# (shared history is kept in OpenAI format; converted when calling Claude)
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _to_anthropic_messages(history: list[dict]) -> list[dict]:
-    result: list[dict] = []
-    i = 0
-    while i < len(history):
-        msg = history[i]
-        role = msg["role"]
-
-        if role == "user":
-            result.append({"role": "user", "content": msg.get("content", "")})
-            i += 1
-
-        elif role == "assistant":
-            anthropic_content: list[dict] = []
-            text = msg.get("content") or ""
-            if text:
-                anthropic_content.append({"type": "text", "text": text})
-            for tc in msg.get("tool_calls", []):
-                try:
-                    inputs = json.loads(tc["function"]["arguments"] or "{}")
-                except json.JSONDecodeError:
-                    inputs = {}
-                anthropic_content.append({
-                    "type": "tool_use",
-                    "id": tc["id"],
-                    "name": tc["function"]["name"],
-                    "input": inputs,
-                })
-            result.append({
-                "role": "assistant",
-                "content": anthropic_content if anthropic_content else text,
-            })
-            i += 1
-
-        elif role == "tool":
-            # Group consecutive tool results into one user message (Anthropic requirement)
-            tool_results: list[dict] = []
-            while i < len(history) and history[i]["role"] == "tool":
-                tm = history[i]
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": tm["tool_call_id"],
-                    "content": str(tm.get("content", "")),
-                })
-                i += 1
-            result.append({"role": "user", "content": tool_results})
-
-        else:
-            i += 1
-
-    return result
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Main agent — orchestrates routing and both backends
+# Main agent
 # ─────────────────────────────────────────────────────────────────────────────
 
 class AxonAgent:
     def __init__(self, dispatcher: ToolDispatcher) -> None:
         self._dispatcher = dispatcher
-        self._history: list[dict] = []   # OpenAI format, shared across backends
+        self._history: list[dict] = []   # Anthropic message format
 
     def clear_history(self) -> None:
         self._history.clear()
@@ -212,158 +104,29 @@ class AxonAgent:
         from src.ui.settings_dialog import load_settings
         settings = load_settings()
 
+        if not config.claude.api_key:
+            yield ("error", "No Anthropic API key set. Open Settings and add your key.")
+            return
+
+        use_smart = settings.get("use_smart_for_complex", True) and _needs_smart_model(user_text)
+        model = config.claude.smart_model if use_smart else config.claude.fast_model
+        logger.info(f"→ {'Smart' if use_smart else 'Fast'} model ({model})")
+
         self._history.append({"role": "user", "content": user_text})
         self._trim_history()
 
-        use_cloud = settings.get("use_cloud_for_complex", True)
-        cloud_ok = use_cloud and bool(config.claude.api_key) and _has_internet()
-
-        if cloud_ok:
-            decision = await _classify_task(user_text)
-        else:
-            decision = "local"
-
-        if decision == "cloud":
-            logger.info("→ Cloud (Claude)")
-            try:
-                async for event in self._run_cloud():
-                    yield event
-                return
-            except Exception as e:
-                logger.warning(f"Cloud failed, falling back to local: {e}")
-                yield ("text", "\n[Switching to local model…]\n")
-
-        logger.info("→ Local (Ollama)")
-        async for event in self._run_local():
+        async for event in self._run_claude(model):
             yield event
 
-    # ── Local backend (Ollama via OpenAI-compatible API) ─────────────────────
+    # ── Claude backend ────────────────────────────────────────────────────────
 
-    async def _run_local(self) -> AsyncGenerator:
-        tools = get_openai_tools()
-        client = _ollama_client()
-
-        for _ in range(config.claude.max_tool_iterations):
-            text_acc = ""
-            tool_calls_acc: dict[int, dict] = {}
-
-            try:
-                stream = await client.chat.completions.create(
-                    model=config.ollama.model,
-                    messages=[
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        *self._history,
-                    ],
-                    tools=tools,
-                    tool_choice="auto",
-                    stream=True,
-                    temperature=config.claude.temperature,
-                    max_tokens=config.claude.max_tokens,
-                )
-                async for chunk in stream:
-                    if not chunk.choices:
-                        continue
-                    delta = chunk.choices[0].delta
-                    if delta.content:
-                        text_acc += delta.content
-                        # Don't yield text yet — buffer it so we can strip
-                        # any JSON tool calls before showing in the chat
-                    if delta.tool_calls:
-                        for tc in delta.tool_calls:
-                            idx = tc.index
-                            if idx not in tool_calls_acc:
-                                tool_calls_acc[idx] = {"id": "", "name": "", "arguments": ""}
-                            if tc.id:
-                                tool_calls_acc[idx]["id"] = tc.id
-                            if tc.function:
-                                if tc.function.name:
-                                    tool_calls_acc[idx]["name"] += tc.function.name
-                                if tc.function.arguments:
-                                    tool_calls_acc[idx]["arguments"] += tc.function.arguments
-
-            except Exception as e:
-                logger.error(f"Local model error: {e}")
-                yield ("error", str(e))
-                return
-
-            # Fallback: model wrote tool calls as plain JSON text
-            if not tool_calls_acc and text_acc:
-                for i, m in enumerate(_TEXT_TOOL_RE.finditer(text_acc)):
-                    try:
-                        json.loads(m.group(2))
-                        tool_calls_acc[i] = {
-                            "id": f"txt_{i}",
-                            "name": m.group(1),
-                            "arguments": m.group(2),
-                        }
-                    except json.JSONDecodeError:
-                        pass
-
-            # Strip JSON tool calls from text and log them to console only
-            if tool_calls_acc:
-                clean = _TEXT_TOOL_RE.sub("", text_acc).strip()
-                if clean != text_acc:
-                    for _, tc in sorted(tool_calls_acc.items()):
-                        logger.info(f"Tool call (text): {tc['name']}({tc['arguments'][:60]})")
-                text_acc = clean
-
-            # Now emit the clean text to the chat
-            if text_acc:
-                yield ("text", text_acc)
-
-            # Append assistant turn to shared history
-            assistant_msg: dict = {"role": "assistant", "content": text_acc or ""}
-            if tool_calls_acc:
-                assistant_msg["tool_calls"] = [
-                    {
-                        "id": tc["id"],
-                        "type": "function",
-                        "function": {"name": tc["name"], "arguments": tc["arguments"]},
-                    }
-                    for _, tc in sorted(tool_calls_acc.items())
-                ]
-            self._history.append(assistant_msg)
-
-            if not tool_calls_acc:
-                yield ("done", text_acc)
-                return
-
-            # Execute tools
-            for _, tc in sorted(tool_calls_acc.items()):
-                name = tc["name"]
-                try:
-                    inputs = json.loads(tc["arguments"] or "{}")
-                except json.JSONDecodeError:
-                    inputs = {}
-
-                yield ("tool_start", {"name": name, "inputs": inputs})
-                result = await self._dispatcher.dispatch(name, inputs)
-                yield ("tool_end", {"name": name, "success": result.success})
-
-                if result.is_image and result.output:
-                    content = "[Screenshot captured. Use list_windows/find_window to navigate UI.]"
-                else:
-                    content = str(result.output) if result.success else f"ERROR: {result.error}"
-
-                self._history.append({
-                    "role": "tool",
-                    "tool_call_id": tc["id"],
-                    "content": content,
-                })
-
-        yield ("error", "Max tool iterations reached")
-
-    # ── Cloud backend (Anthropic / Claude) ────────────────────────────────────
-
-    async def _run_cloud(self) -> AsyncGenerator:
+    async def _run_claude(self, model: str) -> AsyncGenerator:
         try:
             import anthropic
         except ImportError:
-            raise RuntimeError("anthropic package not installed")
+            raise RuntimeError("anthropic package not installed — run: pip install anthropic")
 
         client = anthropic.Anthropic(api_key=config.claude.api_key)
-        # Build Anthropic-format message list from shared history
-        anthropic_messages = _to_anthropic_messages(self._history)
 
         for _ in range(config.claude.max_tool_iterations):
             text_chunks: list[str] = []
@@ -377,11 +140,11 @@ class AxonAgent:
             def _stream_sync():
                 try:
                     with client.messages.stream(
-                        model=config.claude.model,
+                        model=model,
                         max_tokens=config.claude.max_tokens,
                         system=SYSTEM_PROMPT,
                         tools=TOOL_SCHEMAS,
-                        messages=anthropic_messages,
+                        messages=self._history,
                     ) as stream:
                         for event in stream:
                             loop.call_soon_threadsafe(queue.put_nowait, event)
@@ -422,24 +185,8 @@ class AxonAgent:
                     current_block_type = None
                     current_tool = {}
 
-            # Append assistant turn to shared history (OpenAI format)
+            # Append assistant turn to history
             text_content = "".join(text_chunks)
-            assistant_msg: dict = {"role": "assistant", "content": text_content or ""}
-            if tool_use_blocks:
-                assistant_msg["tool_calls"] = [
-                    {
-                        "id": tu["id"],
-                        "type": "function",
-                        "function": {
-                            "name": tu["name"],
-                            "arguments": json.dumps(tu["input"]),
-                        },
-                    }
-                    for tu in tool_use_blocks
-                ]
-            self._history.append(assistant_msg)
-
-            # Keep Anthropic-format list in sync for next iteration
             anthropic_content: list[dict] = []
             if text_content:
                 anthropic_content.append({"type": "text", "text": text_content})
@@ -450,23 +197,24 @@ class AxonAgent:
                     "name": tu["name"],
                     "input": tu["input"],
                 })
-            if anthropic_content:
-                anthropic_messages.append({"role": "assistant", "content": anthropic_content})
+            self._history.append({
+                "role": "assistant",
+                "content": anthropic_content if anthropic_content else text_content,
+            })
 
             if not tool_use_blocks:
                 yield ("done", text_content)
                 return
 
             # Execute tools
-            anthropic_tool_results: list[dict] = []
+            tool_results: list[dict] = []
             for tu in tool_use_blocks:
                 yield ("tool_start", {"name": tu["name"], "inputs": tu["input"]})
                 result = await self._dispatcher.dispatch(tu["name"], tu["input"])
                 yield ("tool_end", {"name": tu["name"], "success": result.success})
 
                 if result.is_image and result.output:
-                    content_str = "[Screenshot captured]"
-                    anthropic_tool_results.append({
+                    tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": tu["id"],
                         "content": [{
@@ -480,27 +228,19 @@ class AxonAgent:
                     })
                 else:
                     content_str = str(result.output) if result.success else f"ERROR: {result.error}"
-                    anthropic_tool_results.append({
+                    tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": tu["id"],
                         "content": content_str,
                     })
 
-                # Shared history (OpenAI format)
-                self._history.append({
-                    "role": "tool",
-                    "tool_call_id": tu["id"],
-                    "content": content_str,
-                })
-
-            anthropic_messages.append({"role": "user", "content": anthropic_tool_results})
+            self._history.append({"role": "user", "content": tool_results})
 
         yield ("error", "Max tool iterations reached")
 
     # ── History management ────────────────────────────────────────────────────
 
     def _trim_history(self) -> None:
-        """Cap history length to avoid ballooning token counts."""
         max_msgs = 40
         if len(self._history) > max_msgs:
             self._history = self._history[-max_msgs:]

@@ -432,9 +432,8 @@ class AxonWindow(QMainWindow):
         config.audio.tts_voice = settings.get("tts_voice", config.audio.tts_voice)
 
         # AI models
-        config.ollama.model = settings.get("local_model", config.ollama.model)
-        config.ollama.router_model = settings.get("router_model", config.ollama.router_model)
-        config.claude.model = settings.get("claude_model", config.claude.model)
+        config.claude.fast_model = settings.get("fast_model", config.claude.fast_model)
+        config.claude.smart_model = settings.get("smart_model", config.claude.smart_model)
         config.claude.max_tool_iterations = settings.get(
             "max_tool_iterations", config.claude.max_tool_iterations
         )
