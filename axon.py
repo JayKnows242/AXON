@@ -57,28 +57,44 @@ logger.add(
 )
 
 # ══════════════════════════════════════════════════════════════════════════════
-# STEP 4 — First-run / .env check
+# STEP 4 — First-run / startup checks
 # ══════════════════════════════════════════════════════════════════════════════
-def _needs_setup() -> bool:
+def _ensure_env() -> None:
+    """Copy .env.example → .env on first run."""
     env_file = _APP_DIR / ".env"
     env_example = _APP_DIR / ".env.example"
     if not env_file.exists() and env_example.exists():
         shutil.copy(env_example, env_file)
-    from dotenv import dotenv_values
-    vals = dotenv_values(str(env_file)) if env_file.exists() else {}
-    key = vals.get("ANTHROPIC_API_KEY", "")
-    return key in ("", "sk-ant-xxxxx")
 
 
-if _needs_setup():
+def _check_ollama() -> bool:
+    """Return True if Ollama is reachable at localhost:11434."""
+    import socket
+    try:
+        socket.setdefaulttimeout(2)
+        socket.connect(("127.0.0.1", 11434))
+        socket.setdefaulttimeout(None)
+        return True
+    except OSError:
+        socket.setdefaulttimeout(None)
+        return False
+
+
+_ensure_env()
+
+if not _check_ollama():
     ctypes.windll.user32.MessageBoxW(
         0,
-        f"No API key found.\n\nPlease edit:\n{_APP_DIR / '.env'}\n\nSet ANTHROPIC_API_KEY to your Anthropic key.\nGet one at: console.anthropic.com",
-        "AXON — First Time Setup",
-        0x40,
+        "Ollama is not running.\n\n"
+        "1. Download Ollama from: ollama.com\n"
+        "2. Install and launch it\n"
+        "3. Open a terminal and run:\n"
+        "   ollama pull qwen2.5-coder:14b\n"
+        "   ollama pull qwen2.5:1.5b\n\n"
+        "Then restart AXON.",
+        "AXON — Ollama Required",
+        0x30,  # Warning icon
     )
-    # Open the .env in notepad for easy editing
-    os.startfile(str(_APP_DIR / ".env"))
     sys.exit(0)
 
 # ══════════════════════════════════════════════════════════════════════════════

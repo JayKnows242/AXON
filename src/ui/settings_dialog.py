@@ -26,9 +26,13 @@ DEFAULTS: dict = {
     # Input
     "whisper_model": "base.en",
     "push_to_talk_key": "ctrl+shift+space",
-    # Agent
+    # Agent — local
+    "local_model": "qwen2.5-coder:14b",
+    "router_model": "qwen2.5:1.5b",
+    # Agent — cloud
+    "use_cloud_for_complex": True,
     "claude_model": "claude-sonnet-4-6",
-    "auto_screenshot": True,  # take screenshot before every action
+    "auto_screenshot": True,
     "max_tool_iterations": 25,
     # Screen
     "capture_monitor": 1,
@@ -281,33 +285,83 @@ class _AgentPage(QWidget):
         layout.setContentsMargins(20, 16, 20, 16)
         layout.setSpacing(10)
 
-        layout.addWidget(_section("AI MODEL"))
+        # ── Local model ──────────────────────────────────────────────────────
+        layout.addWidget(_section("LOCAL MODEL  (Ollama)"))
         layout.addWidget(_divider())
 
+        layout.addWidget(_label("Model  (must be pulled in Ollama)"))
+        self.local_model = QComboBox()
+        self.local_model.setEditable(True)
+        local_models = [
+            "qwen2.5-coder:14b",
+            "qwen2.5-coder:7b",
+            "qwen2.5:14b",
+            "qwen2.5:7b",
+            "llama3.1:8b",
+            "phi4",
+        ]
+        for m in local_models:
+            self.local_model.addItem(m)
+        cur_local = settings.get("local_model", "qwen2.5-coder:14b")
+        idx = next((i for i, m in enumerate(local_models) if m == cur_local), -1)
+        if idx >= 0:
+            self.local_model.setCurrentIndex(idx)
+        else:
+            self.local_model.setCurrentText(cur_local)
+        layout.addWidget(self.local_model)
+
+        layout.addWidget(_label("Router model  (classifies task complexity)"))
+        self.router_model = QComboBox()
+        self.router_model.setEditable(True)
+        router_models = ["qwen2.5:1.5b", "qwen2.5:0.5b", "qwen2.5-coder:7b"]
+        for m in router_models:
+            self.router_model.addItem(m)
+        cur_router = settings.get("router_model", "qwen2.5:1.5b")
+        idx = next((i for i, m in enumerate(router_models) if m == cur_router), -1)
+        if idx >= 0:
+            self.router_model.setCurrentIndex(idx)
+        else:
+            self.router_model.setCurrentText(cur_router)
+        layout.addWidget(self.router_model)
+
+        # ── Cloud model ──────────────────────────────────────────────────────
+        layout.addSpacing(6)
+        layout.addWidget(_section("CLOUD MODEL  (Claude API)"))
+        layout.addWidget(_divider())
+
+        self.use_cloud = QCheckBox("Use Claude for complex tasks")
+        self.use_cloud.setChecked(settings.get("use_cloud_for_complex", True))
+        self.use_cloud.setToolTip(
+            "Qwen routes simple tasks locally.\n"
+            "Complex tasks escalate to Claude.\n"
+            "Falls back to local if offline or API key missing."
+        )
+        layout.addWidget(self.use_cloud)
+
         layout.addWidget(_label("Claude model"))
-        self.model = QComboBox()
-        models = [
-            ("Sonnet 4.6 — Smartest (recommended)", "claude-sonnet-4-6"),
+        self.cloud_model = QComboBox()
+        cloud_models = [
+            ("Sonnet 4.6 — Recommended", "claude-sonnet-4-6"),
             ("Haiku 4.5 — Faster, cheaper", "claude-haiku-4-5-20251001"),
             ("Opus 4.6 — Most powerful", "claude-opus-4-6"),
         ]
-        for label, val in models:
-            self.model.addItem(label, val)
-        cur = settings.get("claude_model", "claude-sonnet-4-6")
-        idx = next((i for i, (_, v) in enumerate(models) if v == cur), 0)
-        self.model.setCurrentIndex(idx)
-        layout.addWidget(self.model)
+        for label, val in cloud_models:
+            self.cloud_model.addItem(label, val)
+        cur_cloud = settings.get("claude_model", "claude-sonnet-4-6")
+        idx = next((i for i, (_, v) in enumerate(cloud_models) if v == cur_cloud), 0)
+        self.cloud_model.setCurrentIndex(idx)
+        layout.addWidget(self.cloud_model)
 
-        layout.addSpacing(10)
-        layout.addWidget(_section("BEHAVIOR"))
+        # ── Behaviour ────────────────────────────────────────────────────────
+        layout.addSpacing(6)
+        layout.addWidget(_section("BEHAVIOUR"))
         layout.addWidget(_divider())
 
         self.auto_ss = QCheckBox("Take screenshot before each action")
         self.auto_ss.setChecked(settings.get("auto_screenshot", True))
-        self.auto_ss.setToolTip("Lets AXON verify the current screen state before clicking")
+        self.auto_ss.setToolTip("Lets AXON verify the screen state before clicking")
         layout.addWidget(self.auto_ss)
 
-        layout.addSpacing(6)
         layout.addWidget(_label("Max actions per task"))
         self.max_iter = QComboBox()
         for n in [10, 15, 25, 40, 60]:
@@ -321,7 +375,10 @@ class _AgentPage(QWidget):
 
     def values(self) -> dict:
         return {
-            "claude_model": self.model.currentData(),
+            "local_model": self.local_model.currentText().strip(),
+            "router_model": self.router_model.currentText().strip(),
+            "use_cloud_for_complex": self.use_cloud.isChecked(),
+            "claude_model": self.cloud_model.currentData(),
             "auto_screenshot": self.auto_ss.isChecked(),
             "max_tool_iterations": self.max_iter.currentData(),
         }

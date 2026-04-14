@@ -274,6 +274,21 @@ TOOL_SCHEMAS = [
 ]
 
 
+def get_openai_tools() -> list[dict]:
+    """Return TOOL_SCHEMAS in OpenAI/Ollama function-calling format."""
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": s["name"],
+                "description": s["description"],
+                "parameters": s["input_schema"],
+            },
+        }
+        for s in TOOL_SCHEMAS
+    ]
+
+
 # ── Tool Dispatcher ──────────────────────────────────────────────────────────
 
 class ToolDispatcher:
