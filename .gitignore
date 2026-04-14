@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+data/memory_store/
+data/axon.log
+dist/
+build/
+*.egg-info/
