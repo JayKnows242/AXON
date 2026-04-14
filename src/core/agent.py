@@ -6,10 +6,19 @@ import json
 import socket
 from typing import AsyncGenerator
 
+import re
+
 from loguru import logger
 
 from src.config import config
 from src.core.tools import ToolDispatcher, TOOL_SCHEMAS, get_openai_tools
+
+# Matches tool calls the model writes as plain text instead of structured calls
+# e.g.  {"name": "click", "arguments": {"x": 100, "y": 200}}
+_TEXT_TOOL_RE = re.compile(
+    r'\{\s*"name"\s*:\s*"(\w+)"\s*,\s*"arguments"\s*:\s*(\{[^{}]*\})\s*\}',
+    re.DOTALL,
+)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # System prompt (shared by both backends)
@@ -231,6 +240,24 @@ class AxonAgent:
                 logger.error(f"Local model error: {e}")
                 yield ("error", str(e))
                 return
+
+            # Fallback: model wrote tool calls as plain JSON text instead of
+            # using structured function calling (common with qwen2.5-coder)
+            if not tool_calls_acc and text_acc:
+                for i, m in enumerate(_TEXT_TOOL_RE.finditer(text_acc)):
+                    try:
+                        json.loads(m.group(2))   # validate args
+                        tool_calls_acc[i] = {
+                            "id": f"txt_{i}",
+                            "name": m.group(1),
+                            "arguments": m.group(2),
+                        }
+                    except json.JSONDecodeError:
+                        pass
+                if tool_calls_acc:
+                    # Strip the raw JSON blobs from the displayed text
+                    clean = _TEXT_TOOL_RE.sub("", text_acc).strip()
+                    text_acc = clean
 
             # Append assistant turn to shared history
             assistant_msg: dict = {"role": "assistant", "content": text_acc or ""}

@@ -246,6 +246,23 @@ def main() -> None:
 
     async def _startup():
         push_to_talk.start(loop)
+
+        # Pre-warm local models so first response isn't slow
+        signals.status_changed.emit("Loading models...")
+        try:
+            import httpx
+            base = config.ollama.base_url.replace("/v1", "")
+            async with httpx.AsyncClient(timeout=120) as client:
+                for model in [config.ollama.router_model, config.ollama.model]:
+                    logger.info(f"Pre-warming {model}...")
+                    await client.post(
+                        f"{base}/api/generate",
+                        json={"model": model, "prompt": " ", "keep_alive": "60m"},
+                    )
+                    logger.info(f"{model} warm")
+        except Exception as e:
+            logger.warning(f"Model pre-warm failed (will load on first use): {e}")
+
         logger.info("AXON ready")
         signals.status_changed.emit("Ready")
 
