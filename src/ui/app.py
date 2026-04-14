@@ -448,7 +448,7 @@ class AxonWindow(QMainWindow):
                 self._toggle_pin()
 
         logger.debug(
-            f"Settings applied — tts={speaker.enabled} model={config.claude.model}"
+            f"Settings applied — tts={speaker.enabled} fast={config.claude.fast_model} smart={config.claude.smart_model}"
         )
 
     def _send(self):
