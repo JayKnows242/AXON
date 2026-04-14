@@ -119,7 +119,7 @@ threading.excepthook = _thread_excepthook
 # MAIN
 # ══════════════════════════════════════════════════════════════════════════════
 def main() -> None:
-    logger.info(f"AXON starting — model: {config.claude.model}")
+    logger.info(f"AXON starting — fast: {config.claude.fast_model} | smart: {config.claude.smart_model}")
 
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
