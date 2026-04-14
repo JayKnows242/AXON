@@ -38,12 +38,12 @@ RULES:
 
 def _has_internet() -> bool:
     try:
-        socket.setdefaulttimeout(2)
-        socket.connect(("8.8.8.8", 53))
-        socket.setdefaulttimeout(None)
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(2)
+        s.connect(("8.8.8.8", 53))
+        s.close()
         return True
     except OSError:
-        socket.setdefaulttimeout(None)
         return False
 
 

@@ -71,12 +71,12 @@ def _check_ollama() -> bool:
     """Return True if Ollama is reachable at localhost:11434."""
     import socket
     try:
-        socket.setdefaulttimeout(2)
-        socket.connect(("127.0.0.1", 11434))
-        socket.setdefaulttimeout(None)
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(2)
+        s.connect(("127.0.0.1", 11434))
+        s.close()
         return True
     except OSError:
-        socket.setdefaulttimeout(None)
         return False
 
 
@@ -172,51 +172,52 @@ def main() -> None:
     # ── Build window ───────────────────────────────────────────────────────────
     window = AxonWindow(signals)
 
-    # Single-task lock — only one agent run at a time
-    _task_lock = asyncio.Lock()
-    _current_task: asyncio.Task | None = None
+    # Single-task — only one agent run at a time
+    _active_task: asyncio.Task | None = None
 
-    async def _handle_message(text: str):
-        nonlocal _current_task
+    async def _handle_message(text: str, prev: asyncio.Task | None = None):
+        nonlocal _active_task
 
-        # If already busy, cancel and wait for it to stop first
-        if _task_lock.locked():
+        # Cancel the previous task (captured at dispatch time — no race condition)
+        if prev and not prev.done():
             logger.info("Cancelling previous task for new message")
             speaker.stop()
-            if _current_task and not _current_task.done():
-                _current_task.cancel()
-                try:
-                    await asyncio.wait_for(asyncio.shield(_current_task), timeout=2.0)
-                except Exception:
-                    pass
-
-        async with _task_lock:
-            signals.status_changed.emit("Thinking...")
-            await speaker.start_stream()
+            prev.cancel()
             try:
-                async for event_type, data in agent.run(text):
-                    if event_type == "text":
-                        signals.text_chunk.emit(data)
-                        speaker.push(data)
-                    elif event_type == "tool_start":
-                        signals.tool_started.emit(data["name"], str(data.get("inputs", {}))[:60])
-                    elif event_type == "tool_end":
-                        signals.tool_finished.emit(data["name"], data["success"])
-                    elif event_type == "error":
-                        signals.error_occurred.emit(data)
-                        return
-            except asyncio.CancelledError:
-                logger.info("Task cancelled")
-            except Exception as e:
-                logger.error(f"Agent error: {e}")
-                signals.error_occurred.emit(str(e))
-            finally:
-                await speaker.finish_stream()
-                signals.response_done.emit()
+                await asyncio.gather(prev, return_exceptions=True)
+            except Exception:
+                pass
+
+        _active_task = asyncio.current_task()
+        signals.status_changed.emit("Thinking...")
+        await speaker.start_stream()
+        try:
+            async for event_type, data in agent.run(text):
+                if event_type == "text":
+                    signals.text_chunk.emit(data)
+                    speaker.push(data)
+                elif event_type == "tool_start":
+                    signals.tool_started.emit(data["name"], str(data.get("inputs", {}))[:60])
+                elif event_type == "tool_end":
+                    signals.tool_finished.emit(data["name"], data["success"])
+                elif event_type == "error":
+                    signals.error_occurred.emit(data)
+                    return
+        except asyncio.CancelledError:
+            logger.info("Task cancelled")
+        except Exception as e:
+            logger.error(f"Agent error: {e}")
+            signals.error_occurred.emit(str(e))
+        finally:
+            await speaker.finish_stream()
+            signals.response_done.emit()
+            if _active_task is asyncio.current_task():
+                _active_task = None
 
     def _dispatch_message(text: str):
-        nonlocal _current_task
-        _current_task = asyncio.ensure_future(_handle_message(text))
+        nonlocal _active_task
+        prev = _active_task
+        asyncio.ensure_future(_handle_message(text, prev))
 
     def _clear():
         speaker.stop()

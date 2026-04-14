@@ -425,6 +425,7 @@ class SettingsDialog(QDialog):
     def __init__(self, settings: dict, parent=None):
         super().__init__(parent)
         self._settings = dict(settings)
+        self._drag = None
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setMinimumSize(560, 420)
@@ -515,7 +516,7 @@ class SettingsDialog(QDialog):
             self._drag = e.globalPosition().toPoint() - self.frameGeometry().topLeft()
 
     def mouseMoveEvent(self, e):
-        if hasattr(self, "_drag") and e.buttons() == Qt.MouseButton.LeftButton:
+        if self._drag is not None and e.buttons() == Qt.MouseButton.LeftButton:
             self.move(e.globalPosition().toPoint() - self._drag)
 
     def mouseReleaseEvent(self, e):
