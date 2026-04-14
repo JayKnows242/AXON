@@ -20,7 +20,7 @@ _SETTINGS_PATH = Path(__file__).parent.parent.parent / "data" / "settings.json"
 
 DEFAULTS: dict = {
     # Voice
-    "tts_enabled": True,
+    "tts_enabled": False,
     "tts_voice": "en-US-GuyNeural",
     "tts_speed": 8,          # % faster than default
     # Input
