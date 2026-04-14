@@ -134,7 +134,7 @@ TOOL_SCHEMAS = [
     },
     {
         "name": "open_app",
-        "description": "Open an application by name or path. Examples: 'notepad', 'chrome', 'C:/path/to/app.exe'.",
+        "description": "Open an application by name or path and wait for it to appear. Returns the exact window title — pass that title directly to focus_window. Examples: 'notepad', 'chrome', 'C:/path/to/app.exe'.",
         "input_schema": {
             "type": "object",
             "properties": {"name_or_path": {"type": "string"}},

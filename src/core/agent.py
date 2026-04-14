@@ -35,7 +35,8 @@ RESPONSE STYLE:
 
 TASK RULES:
 - Complete the FULL task — never stop after one tool call if more steps are needed.
-- To type in any app: open_app → take_screenshot → focus_window → click in the text area → type_text.
+- To type in any app: open_app → focus_window(title from open_app result) → take_screenshot → click text area → type_text.
+- open_app returns the exact window title — use that title string directly in focus_window, do not guess it.
 - Never type without first focusing the target window with focus_window.
 - Before clicking UI elements, take_screenshot to confirm coordinates.
 - If a tool errors, try an alternative — do not give up.
@@ -227,7 +228,8 @@ class AxonAgent:
                     delta = chunk.choices[0].delta
                     if delta.content:
                         text_acc += delta.content
-                        yield ("text", delta.content)
+                        # Don't yield text yet — buffer it so we can strip
+                        # any JSON tool calls before showing in the chat
                     if delta.tool_calls:
                         for tc in delta.tool_calls:
                             idx = tc.index
@@ -246,12 +248,11 @@ class AxonAgent:
                 yield ("error", str(e))
                 return
 
-            # Fallback: model wrote tool calls as plain JSON text instead of
-            # using structured function calling (common with qwen2.5-coder)
+            # Fallback: model wrote tool calls as plain JSON text
             if not tool_calls_acc and text_acc:
                 for i, m in enumerate(_TEXT_TOOL_RE.finditer(text_acc)):
                     try:
-                        json.loads(m.group(2))   # validate args
+                        json.loads(m.group(2))
                         tool_calls_acc[i] = {
                             "id": f"txt_{i}",
                             "name": m.group(1),
@@ -259,10 +260,18 @@ class AxonAgent:
                         }
                     except json.JSONDecodeError:
                         pass
-                if tool_calls_acc:
-                    # Strip the raw JSON blobs from the displayed text
-                    clean = _TEXT_TOOL_RE.sub("", text_acc).strip()
-                    text_acc = clean
+
+            # Strip JSON tool calls from text and log them to console only
+            if tool_calls_acc:
+                clean = _TEXT_TOOL_RE.sub("", text_acc).strip()
+                if clean != text_acc:
+                    for _, tc in sorted(tool_calls_acc.items()):
+                        logger.info(f"Tool call (text): {tc['name']}({tc['arguments'][:60]})")
+                text_acc = clean
+
+            # Now emit the clean text to the chat
+            if text_acc:
+                yield ("text", text_acc)
 
             # Append assistant turn to shared history
             assistant_msg: dict = {"role": "assistant", "content": text_acc or ""}

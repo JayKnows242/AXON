@@ -96,20 +96,53 @@ async def move_window(title: str, x: int, y: int, width: int, height: int) -> st
 
 
 async def open_app(name_or_path: str) -> str:
-    def _do():
-        # Try direct path / known app name first
+    """Launch an app and wait up to 4s for its window to appear. Returns exact window title."""
+    import time
+
+    def _snapshot():
+        import win32gui
+        titles = set()
+        def _cb(hwnd, _):
+            if win32gui.IsWindowVisible(hwnd):
+                t = win32gui.GetWindowText(hwnd)
+                if t:
+                    titles.add(t)
+        win32gui.EnumWindows(_cb, None)
+        return titles
+
+    before = await asyncio.to_thread(_snapshot)
+
+    def _launch():
         try:
             os.startfile(name_or_path)
-            return f"Opened: {name_or_path}"
+            return True
         except Exception:
             pass
-        # Try subprocess
         try:
             subprocess.Popen(name_or_path, shell=True)
-            return f"Launched: {name_or_path}"
+            return True
         except Exception as e:
-            return f"Failed to open {name_or_path}: {e}"
-    return await asyncio.to_thread(_do)
+            return str(e)
+
+    result = await asyncio.to_thread(_launch)
+    if result is not True:
+        return f"Failed to open {name_or_path}: {result}"
+
+    # Poll for new window (up to 4 seconds)
+    keyword = name_or_path.lower().split("\\")[-1].replace(".exe", "")
+    for _ in range(20):
+        await asyncio.sleep(0.2)
+        after = await asyncio.to_thread(_snapshot)
+        new_windows = after - before
+        # Prefer windows whose title contains the app keyword
+        matches = [t for t in new_windows if keyword in t.lower()]
+        if matches:
+            return f"Opened: {matches[0]!r} — use focus_window({matches[0]!r}) to activate"
+        if new_windows:
+            title = next(iter(new_windows))
+            return f"Opened: {title!r} — use focus_window({title!r}) to activate"
+
+    return f"Launched {name_or_path} (window not detected within 4s — use find_window to locate it)"
 
 
 async def close_window(title: str) -> str:
