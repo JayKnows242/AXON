@@ -142,14 +142,27 @@ class Speaker:
     async def _speak(self, text: str) -> None:
         if not self._enabled or self._stop_event.is_set() or not text:
             return
+        # Strip non-speakable characters (box-drawing, emoji, etc.)
+        import unicodedata
+        clean = "".join(
+            c for c in text
+            if unicodedata.category(c)[0] not in ("C", "So") or c in (" ", "\n")
+        ).strip()
+        if not clean or len(clean) < 2:
+            return
         self._speaking = True
         try:
             import edge_tts
             rate_str = f"+{self._rate_pct}%" if self._rate_pct >= 0 else f"{self._rate_pct}%"
-            communicate = edge_tts.Communicate(text, config.audio.tts_voice, rate=rate_str)
+            communicate = edge_tts.Communicate(clean, config.audio.tts_voice, rate=rate_str)
             tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
             tmp.close()
             await communicate.save(tmp.name)
+            # edge-tts saves an empty file when it gets no audio back
+            if os.path.getsize(tmp.name) < 100:
+                logger.debug(f"TTS returned empty audio for: {clean[:40]!r}")
+                os.unlink(tmp.name)
+                return
             if not self._stop_event.is_set():
                 await self._play(tmp.name)
             try:
