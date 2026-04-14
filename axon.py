@@ -164,7 +164,9 @@ def main() -> None:
         await speaker.start_stream()
         try:
             async for event_type, data in agent.run(text):
-                if event_type == "text":
+                if event_type == "model":
+                    signals.status_changed.emit(f"Thinking [{data}]")
+                elif event_type == "text":
                     signals.text_chunk.emit(data)
                     speaker.push(data)
                 elif event_type == "tool_start":
